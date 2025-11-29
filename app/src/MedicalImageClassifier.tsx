@@ -1,51 +1,17 @@
 "use client";
 import React, { useState, ChangeEvent, useEffect } from "react";
-import {
-  Upload,
-  Image,
-  Activity,
-  AlertCircle,
-  CheckCircle,
-  Loader2,
-  BarChart3,
-  Microscope,
-} from "lucide-react";
-
-interface TopClass {
-  index: number;
-  name: string;
-  probability: number;
-}
-
-interface ClassificationResult {
-  result: string; // "cancer" or "not cancer"
-  result_confidence: number;
-  cancer_probability: number;
-  not_cancer_probability: number;
-  top_class: TopClass;
-  all_class_probabilities: number[] | Record<string, number>; // Array of probabilities or object with class names
-}
-
-interface ClassProbability {
-  name: string;
-  probability: number;
-}
-
-interface HealthCheck {
-  status: string;
-  model_loaded: boolean;
-  num_classes: number | null;
-  expected_classes: number;
-  supported_classes: string[];
-  cancer_classes: string[];
-  not_cancer_classes: string[];
-}
-
-interface PlotsResponse {
-  plots: Record<string, string>;
-  count: number;
-  all_available: boolean;
-}
+import { Activity, BarChart3, Microscope } from "lucide-react";
+import type {
+  ClassificationResult,
+  ClassProbability,
+  HealthCheck,
+  PlotsResponse,
+  ClassProbabilityItem,
+} from "./types";
+import { ImageUploadSection } from "./components/ImageUploadSection";
+import { ResultsDisplay } from "./components/ResultsDisplay";
+import { ImageModal } from "./components/ImageModal";
+import { GraphsView } from "./components/GraphsView";
 
 type ViewMode = "prediction" | "graphs";
 
@@ -54,13 +20,16 @@ const MedicalImageClassifier: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<ClassificationResult | null>(null);
-  const [classProbabilities, setClassProbabilities] = useState<ClassProbability[]>([]);
+  const [classProbabilities, setClassProbabilities] = useState<
+    ClassProbability[]
+  >([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [healthCheck, setHealthCheck] = useState<HealthCheck | null>(null);
   const [plots, setPlots] = useState<PlotsResponse | null>(null);
   const [loadingHealth, setLoadingHealth] = useState<boolean>(false);
   const [loadingPlots, setLoadingPlots] = useState<boolean>(false);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   // Helper function to safely format probability as percentage
   const formatProbability = (prob: number | undefined | null): number => {
@@ -118,8 +87,8 @@ const MedicalImageClassifier: React.FC = () => {
         // Handle network errors (server not running, CORS, etc.)
         throw new Error(
           `Network error: Unable to connect to the backend server at http://localhost:5001. ` +
-          `Please ensure the backend server is running and accessible. ` +
-          `Error: ${fetchError.message}`
+            `Please ensure the backend server is running and accessible. ` +
+            `Error: ${fetchError.message}`
         );
       });
 
@@ -150,83 +119,122 @@ const MedicalImageClassifier: React.FC = () => {
       }
 
       const rawData = await response.json();
-      
+
       // Debug: Log the received data
       console.log("API Response:", rawData);
-      console.log("all_class_probabilities type:", typeof rawData.all_class_probabilities);
-      console.log("all_class_probabilities value:", rawData.all_class_probabilities);
-      
+      console.log(
+        "all_class_probabilities type:",
+        typeof rawData.all_class_probabilities
+      );
+      console.log(
+        "all_class_probabilities value:",
+        rawData.all_class_probabilities
+      );
+
       // Normalize all_class_probabilities - handle both array and object formats
       let normalizedProbabilities: ClassProbability[] = [];
-      
+
       if (rawData.all_class_probabilities) {
         if (Array.isArray(rawData.all_class_probabilities)) {
           // Check if it's an array of objects (with class_index, class_name, probability)
           const firstElement = rawData.all_class_probabilities[0];
-          if (firstElement && typeof firstElement === 'object' && 'class_name' in firstElement && 'probability' in firstElement) {
+          if (
+            firstElement &&
+            typeof firstElement === "object" &&
+            "class_name" in firstElement &&
+            "probability" in firstElement
+          ) {
             // Array of objects format: [{class_index, class_name, probability}, ...]
             console.log("Detected array of objects format");
-            normalizedProbabilities = rawData.all_class_probabilities.map((item: any) => ({
-              name: item.class_name || `Class ${item.class_index ?? 'Unknown'}`,
+            normalizedProbabilities = (
+              rawData.all_class_probabilities as ClassProbabilityItem[]
+            ).map((item: ClassProbabilityItem) => ({
+              name: item.class_name || `Class ${item.class_index ?? "Unknown"}`,
               probability: formatProbability(item.probability),
             }));
             // Sort by probability descending to show highest first
-            normalizedProbabilities.sort((a, b) => b.probability - a.probability);
+            normalizedProbabilities.sort(
+              (a, b) => b.probability - a.probability
+            );
           } else {
             // Array of numbers format: [0.5, 0.3, ...]
             console.log("Detected array of numbers format");
-            normalizedProbabilities = rawData.all_class_probabilities.map((prob: number, idx: number) => ({
-              name: `Class ${idx}`,
-              probability: formatProbability(prob),
-            }));
+            normalizedProbabilities = rawData.all_class_probabilities.map(
+              (prob: number, idx: number) => ({
+                name: `Class ${idx}`,
+                probability: formatProbability(prob),
+              })
+            );
           }
-        } else if (typeof rawData.all_class_probabilities === 'object' && rawData.all_class_probabilities !== null && !Array.isArray(rawData.all_class_probabilities)) {
+        } else if (
+          typeof rawData.all_class_probabilities === "object" &&
+          rawData.all_class_probabilities !== null &&
+          !Array.isArray(rawData.all_class_probabilities)
+        ) {
           // If it's an object with class names as keys, convert to array
-          const probObject = rawData.all_class_probabilities as Record<string, number>;
+          const probObject = rawData.all_class_probabilities as Record<
+            string,
+            number
+          >;
           console.log("Converting object to array:", probObject);
           console.log("Object keys:", Object.keys(probObject));
           console.log("Object entries:", Object.entries(probObject));
-          
-          normalizedProbabilities = Object.entries(probObject).map(([name, prob]) => {
-            console.log(`Processing: ${name} = ${prob} (type: ${typeof prob})`);
-            // Use the probability as-is, formatProbability will handle validation
-            const normalizedProb = formatProbability(prob);
-            console.log(`  -> Normalized to: ${normalizedProb}`);
-            
-            return {
-              name: name,
-              probability: normalizedProb,
-            };
-          });
-          
-          console.log("Normalized probabilities array:", normalizedProbabilities);
+
+          normalizedProbabilities = Object.entries(probObject).map(
+            ([name, prob]) => {
+              console.log(
+                `Processing: ${name} = ${prob} (type: ${typeof prob})`
+              );
+              // Use the probability as-is, formatProbability will handle validation
+              const normalizedProb = formatProbability(prob);
+              console.log(`  -> Normalized to: ${normalizedProb}`);
+
+              return {
+                name: name,
+                probability: normalizedProb,
+              };
+            }
+          );
+
+          console.log(
+            "Normalized probabilities array:",
+            normalizedProbabilities
+          );
           console.log("Array length:", normalizedProbabilities.length);
           // Sort by probability descending to show highest first
           normalizedProbabilities.sort((a, b) => b.probability - a.probability);
           console.log("After sorting:", normalizedProbabilities);
         } else {
-          console.log("all_class_probabilities is not in expected format:", rawData.all_class_probabilities);
+          console.log(
+            "all_class_probabilities is not in expected format:",
+            rawData.all_class_probabilities
+          );
         }
       }
-      
+
       console.log("Final normalizedProbabilities:", normalizedProbabilities);
-      
+
       const data: ClassificationResult = {
         ...rawData,
-        all_class_probabilities: normalizedProbabilities.map(cp => cp.probability), // Keep as array for compatibility
+        all_class_probabilities: normalizedProbabilities.map(
+          (cp) => cp.probability
+        ), // Keep as array for compatibility
       };
-      
+
       setResult(data);
       setClassProbabilities(normalizedProbabilities);
       console.log("Set classProbabilities state:", normalizedProbabilities);
     } catch (err) {
       let errorMessage = "Failed to classify image.";
-      
+
       if (err instanceof Error) {
-        if (err.message.includes("Network error") || err.message.includes("Failed to fetch")) {
+        if (
+          err.message.includes("Network error") ||
+          err.message.includes("Failed to fetch")
+        ) {
           errorMessage = err.message;
         } else if (err.message.includes("fetch")) {
-          errorMessage = 
+          errorMessage =
             "Unable to connect to the backend server. " +
             "Please ensure the server is running at http://localhost:5001 and try again.";
         } else {
@@ -235,7 +243,7 @@ const MedicalImageClassifier: React.FC = () => {
       } else {
         errorMessage = "An unexpected error occurred. Please try again.";
       }
-      
+
       setError(errorMessage);
       console.error("Classification error:", err);
     } finally {
@@ -255,22 +263,27 @@ const MedicalImageClassifier: React.FC = () => {
     setLoadingHealth(true);
     setError(null);
     try {
-      const response = await fetch("http://localhost:5001/api/health").catch((fetchError) => {
-        throw new Error(
-          `Unable to connect to the backend server at http://localhost:5001. ` +
-          `Please ensure the server is running. Error: ${fetchError.message}`
-        );
-      });
-      
+      const response = await fetch("http://localhost:5001/api/health").catch(
+        (fetchError) => {
+          throw new Error(
+            `Unable to connect to the backend server at http://localhost:5001. ` +
+              `Please ensure the server is running. Error: ${fetchError.message}`
+          );
+        }
+      );
+
       if (!response.ok) {
-        throw new Error(`Health check failed: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Health check failed: ${response.status} ${response.statusText}`
+        );
       }
       const data: HealthCheck = await response.json();
       setHealthCheck(data);
     } catch (err) {
-      const errorMessage = err instanceof Error 
-        ? err.message 
-        : "Failed to fetch health check. Make sure the backend server is running.";
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : "Failed to fetch health check. Make sure the backend server is running.";
       setError(errorMessage);
       console.error("Health check error:", err);
     } finally {
@@ -282,22 +295,27 @@ const MedicalImageClassifier: React.FC = () => {
     setLoadingPlots(true);
     setError(null);
     try {
-      const response = await fetch("http://localhost:5001/api/plots/all").catch((fetchError) => {
-        throw new Error(
-          `Unable to connect to the backend server at http://localhost:5001. ` +
-          `Please ensure the server is running. Error: ${fetchError.message}`
-        );
-      });
-      
+      const response = await fetch("http://localhost:5001/api/plots/all").catch(
+        (fetchError) => {
+          throw new Error(
+            `Unable to connect to the backend server at http://localhost:5001. ` +
+              `Please ensure the server is running. Error: ${fetchError.message}`
+          );
+        }
+      );
+
       if (!response.ok) {
-        throw new Error(`Failed to fetch plots: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Failed to fetch plots: ${response.status} ${response.statusText}`
+        );
       }
       const data: PlotsResponse = await response.json();
       setPlots(data);
     } catch (err) {
-      const errorMessage = err instanceof Error 
-        ? err.message 
-        : "Failed to fetch plots. Make sure the backend server is running.";
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : "Failed to fetch plots. Make sure the backend server is running.";
       setError(errorMessage);
       console.error("Plots fetch error:", err);
     } finally {
@@ -313,47 +331,97 @@ const MedicalImageClassifier: React.FC = () => {
     }
   }, [viewMode]);
 
+  // Handle ESC key to close expanded image
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && expandedImage) {
+        setExpandedImage(null);
+      }
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [expandedImage]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center mb-4">
-            <Activity className="w-12 h-12 text-blue-600 mr-3" />
-            <h1 className="text-4xl font-bold text-gray-800">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-green-900 to-slate-900 relative overflow-hidden">
+      {/* Animated background elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-green-500 rounded-full mix-blend-multiply filter blur-xl opacity-15 animate-blob"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-emerald-500 rounded-full mix-blend-multiply filter blur-xl opacity-15 animate-blob animation-delay-2000"></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-teal-500 rounded-full mix-blend-multiply filter blur-xl opacity-15 animate-blob animation-delay-4000"></div>
+      </div>
+
+      <div className="container mx-auto px-4 py-8 relative z-10">
+        {/* Hero Section */}
+        <div className="text-center mb-12 mt-8">
+          {/* Main Title */}
+          <div className="flex items-center justify-center mb-6">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full blur-lg opacity-40"></div>
+              <Activity className="w-16 h-16 text-green-300 mr-4 relative z-10 animate-pulse" />
+            </div>
+            <h1 className="text-4xl md:text-5xl font-bold text-white/95">
               AI Skin Cancer Classifier
             </h1>
           </div>
-          <p className="text-gray-600 text-lg">
-            Upload dermoscopic images for AI-powered skin lesion classification.
+
+          <p className="text-xl text-green-100/90 mb-2 font-light">
+            Upload dermoscopic images for AI-powered skin lesion classification
           </p>
-          <p className="text-sm text-gray-500 mt-2">
-            Supports: Skin Lesion Analysis melanoma, benign{" "}
+          <p className="text-sm text-green-200/70 mt-3">
+            Supports: Skin Lesion Analysis • Melanoma Detection • Benign
+            Classification
           </p>
-          
+
           {/* View Toggle Buttons */}
-          <div className="flex justify-center gap-4 mt-6">
+          <div className="flex justify-center gap-4 mt-8">
             <button
               onClick={() => setViewMode("prediction")}
-              className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center ${
+              className={`group relative px-8 py-4 rounded-xl font-semibold transition-all duration-300 flex items-center overflow-hidden ${
                 viewMode === "prediction"
-                  ? "bg-blue-600 text-white shadow-lg"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow shadow-green-500/30 scale-105"
+                  : "bg-white/10 backdrop-blur-md text-white/80 hover:bg-white/20 border border-white/20 hover:scale-105"
               }`}
             >
-              <Microscope className="w-5 h-5 mr-2" />
-              Prediction
+              <div
+                className={`absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-600 transition-opacity duration-300 ${
+                  viewMode === "prediction"
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100"
+                }`}
+              ></div>
+              <Microscope
+                className={`w-5 h-5 mr-2 relative z-10 transition-transform duration-300 ${
+                  viewMode === "prediction"
+                    ? "animate-pulse"
+                    : "group-hover:scale-110"
+                }`}
+              />
+              <span className="relative z-10">Prediction</span>
             </button>
             <button
               onClick={() => setViewMode("graphs")}
-              className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center ${
+              className={`group relative px-8 py-4 rounded-xl font-semibold transition-all duration-300 flex items-center overflow-hidden ${
                 viewMode === "graphs"
-                  ? "bg-blue-600 text-white shadow-lg"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow shadow-emerald-500/30 scale-105"
+                  : "bg-white/10 backdrop-blur-md text-white/80 hover:bg-white/20 border border-white/20 hover:scale-105"
               }`}
             >
-              <BarChart3 className="w-5 h-5 mr-2" />
-              Graphs
+              <div
+                className={`absolute inset-0 bg-gradient-to-r from-emerald-500 to-teal-600 transition-opacity duration-300 ${
+                  viewMode === "graphs"
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100"
+                }`}
+              ></div>
+              <BarChart3
+                className={`w-5 h-5 mr-2 relative z-10 transition-transform duration-300 ${
+                  viewMode === "graphs"
+                    ? "animate-pulse"
+                    : "group-hover:scale-110"
+                }`}
+              />
+              <span className="relative z-10">Graphs</span>
             </button>
           </div>
         </div>
@@ -361,461 +429,141 @@ const MedicalImageClassifier: React.FC = () => {
         <div className="max-w-5xl mx-auto">
           {viewMode === "prediction" ? (
             <div className="grid md:grid-cols-2 gap-6">
-            {/* Upload Section */}
-            <div className="bg-white rounded-2xl shadow-lg p-6">
-              <h2 className="text-2xl font-semibold mb-4 flex items-center text-gray-800">
-                <Upload className="w-6 h-6 mr-2 text-blue-600" />
-                Upload Image
-              </h2>
-
-              <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 transition-colors">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                  id="file-upload"
-                />
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  {preview ? (
-                    <div className="space-y-4">
-                      <img
-                        src={preview}
-                        alt="Preview"
-                        className="max-h-64 mx-auto rounded-lg shadow-md"
-                      />
-                      <p className="text-sm text-gray-600">
-                        {selectedFile?.name}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <Image className="w-16 h-16 mx-auto text-gray-400" />
-                      <div>
-                        <p className="text-lg font-medium text-gray-700">
-                          Click to upload image
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          PNG, JPG, JPEG up to 10MB
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </label>
-              </div>
-
-              <div className="mt-6 space-y-3">
-                <button
-                  onClick={classifyImage}
-                  disabled={!selectedFile || loading}
-                  className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <Activity className="w-5 h-5 mr-2" />
-                      Classify Image
-                    </>
-                  )}
-                </button>
-
-                {(preview || result) && (
-                  <button
-                    onClick={reset}
-                    className="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
-                  >
-                    Upload New Image
-                  </button>
-                )}
-              </div>
-
-              {error && (
-                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start">
-                  <AlertCircle className="w-5 h-5 text-red-600 mr-2 flex-shrink-0 mt-0.5" />
-                  <p className="text-red-700 text-sm">{error}</p>
-                </div>
-              )}
+              <ImageUploadSection
+                preview={preview}
+                selectedFile={selectedFile}
+                loading={loading}
+                error={error}
+                onFileSelect={handleFileSelect}
+                onClassify={classifyImage}
+                onReset={reset}
+                onExpandImage={setExpandedImage}
+                hasResult={!!result}
+              />
+              <ResultsDisplay
+                result={result}
+                loading={loading}
+                classProbabilities={classProbabilities}
+                formatPercentage={formatPercentage}
+                formatProbability={formatProbability}
+              />
             </div>
-
-            {/* Results Section */}
-            <div className="bg-white rounded-2xl shadow-lg p-6">
-              <h2 className="text-2xl font-semibold mb-4 flex items-center text-gray-800">
-                <Activity className="w-6 h-6 mr-2 text-purple-600" />
-                Analysis Results
-              </h2>
-
-              {!result && !loading && (
-                <div className="h-64 flex items-center justify-center text-gray-400">
-                  <div className="text-center">
-                    <Image className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                    <p>Results will appear here after classification</p>
-                  </div>
-                </div>
-              )}
-
-              {loading && (
-                <div className="h-64 flex items-center justify-center">
-                  <div className="text-center">
-                    <Loader2 className="w-12 h-12 mx-auto mb-4 text-blue-600 animate-spin" />
-                    <p className="text-gray-600">
-                      Analyzing image with AI model...
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {result && (
-                <div className="space-y-6">
-                  {/* Binary Result */}
-                  <div
-                    className={`rounded-xl p-4 border ${
-                      result.result === "cancer"
-                        ? "bg-gradient-to-r from-red-50 to-orange-50 border-red-200"
-                        : "bg-gradient-to-r from-green-50 to-blue-50 border-green-200"
-                    }`}
-                  >
-                    <div className="flex items-center mb-2">
-                      <CheckCircle
-                        className={`w-6 h-6 mr-2 ${
-                          result.result === "cancer"
-                            ? "text-red-600"
-                            : "text-green-600"
-                        }`}
-                      />
-                      <h3 className="text-lg font-semibold text-gray-800">
-                        Binary Classification
-                      </h3>
-                    </div>
-                    <p className="text-2xl font-bold text-gray-900 mb-1 capitalize">
-                      {result.result === "cancer" ? "Cancer Detected" : "Not Cancer"}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      Confidence: {formatPercentage(result.result_confidence)}%
-                    </p>
-                  </div>
-
-                  {/* Cancer Probabilities */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-red-50 rounded-lg p-4 border border-red-200">
-                      <h4 className="text-sm font-medium text-gray-700 mb-1">
-                        Cancer Probability
-                      </h4>
-                      <p className="text-2xl font-bold text-red-600">
-                        {formatPercentage(result.cancer_probability)}%
-                      </p>
-                      <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-                        <div
-                          className="bg-red-600 h-2 rounded-full transition-all duration-500"
-                          style={{
-                            width: `${formatProbability(result.cancer_probability) * 100}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                      <h4 className="text-sm font-medium text-gray-700 mb-1">
-                        Not Cancer Probability
-                      </h4>
-                      <p className="text-2xl font-bold text-green-600">
-                        {formatPercentage(result.not_cancer_probability)}%
-                      </p>
-                      <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-                        <div
-                          className="bg-green-600 h-2 rounded-full transition-all duration-500"
-                          style={{
-                            width: `${formatProbability(result.not_cancer_probability) * 100}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Top Class */}
-                  {result.top_class && (
-                    <div className="bg-purple-50 rounded-xl p-4 border border-purple-200">
-                      <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                        Top Class Prediction
-                      </h3>
-                      <div className="bg-white rounded-lg p-3">
-                        <div className="flex justify-between items-center mb-2">
-                          <div>
-                            <span className="font-medium text-gray-800">
-                              Class {result.top_class.index}: {result.top_class.name || "Unknown"}
-                            </span>
-                          </div>
-                          <span className="text-sm font-semibold text-purple-600">
-                            {formatPercentage(result.top_class.probability)}%
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-purple-600 h-2 rounded-full transition-all duration-500"
-                            style={{
-                              width: `${formatProbability(result.top_class.probability) * 100}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* All Class Probabilities */}
-                  <div>
-                    <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                      All Class Probabilities ({classProbabilities.length} Classes)
-                    </h3>
-                    {classProbabilities && classProbabilities.length > 0 ? (
-                      <div className="space-y-3">
-                        {classProbabilities.map((classProb, idx) => {
-                          // Debug log
-                          if (idx === 0) {
-                            console.log("Rendering classProbabilities:", classProbabilities);
-                            console.log("First item:", classProb);
-                          }
-                          
-                          const validProb = formatProbability(classProb.probability);
-                          const percentage = validProb * 100;
-
-                          return (
-                            <div key={idx} className="bg-gray-50 rounded-lg p-3">
-                              <div className="flex justify-between items-center mb-2">
-                                <span className="font-medium text-gray-800">
-                                  {classProb.name}
-                                </span>
-                                <span className="text-sm font-semibold text-blue-600">
-                                  {formatPercentage(classProb.probability)}%
-                                </span>
-                              </div>
-                              <div className="w-full bg-gray-200 rounded-full h-2">
-                                <div
-                                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                                  style={{ width: `${percentage}%` }}
-                                />
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                        <p className="text-sm text-yellow-800">
-                          Class probabilities data is not available. (Length: {classProbabilities?.length || 0})
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                    <p className="text-sm text-yellow-800">
-                      <strong>Disclaimer:</strong> This is an AI-assisted tool
-                      for educational purposes only. Always consult healthcare
-                      professionals for medical diagnosis and treatment.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
           ) : (
-            /* Graphs View */
-            <div className="space-y-6">
-              {/* Health Check Section */}
-              <div className="bg-white rounded-2xl shadow-lg p-6">
-                <h2 className="text-2xl font-semibold mb-4 flex items-center text-gray-800">
-                  <Activity className="w-6 h-6 mr-2 text-blue-600" />
-                  Model Health Status
-                </h2>
-                {loadingHealth ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-8 h-8 text-blue-600 animate-spin mr-3" />
-                    <p className="text-gray-600">Loading health check...</p>
-                  </div>
-                ) : healthCheck ? (
-                  <div className="space-y-4">
-                    <div className="grid md:grid-cols-2 gap-4">
-                      <div className={`p-4 rounded-lg border-2 ${
-                        healthCheck.status === 'healthy' 
-                          ? 'bg-green-50 border-green-200' 
-                          : 'bg-red-50 border-red-200'
-                      }`}>
-                        <div className="flex items-center mb-2">
-                          <CheckCircle className={`w-5 h-5 mr-2 ${
-                            healthCheck.status === 'healthy' ? 'text-green-600' : 'text-red-600'
-                          }`} />
-                          <span className="font-semibold text-gray-800">Status</span>
-                        </div>
-                        <p className="text-lg font-bold capitalize">{healthCheck.status}</p>
-                      </div>
-                      <div className={`p-4 rounded-lg border-2 ${
-                        healthCheck.model_loaded 
-                          ? 'bg-green-50 border-green-200' 
-                          : 'bg-yellow-50 border-yellow-200'
-                      }`}>
-                        <div className="flex items-center mb-2">
-                          <Activity className="w-5 h-5 mr-2 text-blue-600" />
-                          <span className="font-semibold text-gray-800">Model Loaded</span>
-                        </div>
-                        <p className="text-lg font-bold">
-                          {healthCheck.model_loaded ? 'Yes' : 'No'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-4 mt-4">
-                      <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                        <h3 className="font-semibold text-gray-800 mb-2">Model Configuration</h3>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Number of Classes:</span> {healthCheck.num_classes ?? 'N/A'}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Expected Classes:</span> {healthCheck.expected_classes}
-                        </p>
-                      </div>
-                      <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
-                        <h3 className="font-semibold text-gray-800 mb-2">Class Information</h3>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Supported Classes:</span> {healthCheck.supported_classes.length}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Cancer Classes:</span> {healthCheck.cancer_classes.length}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Not Cancer Classes:</span> {healthCheck.not_cancer_classes.length}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                      <h3 className="font-semibold text-gray-800 mb-2">Supported Classes</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {healthCheck.supported_classes.map((className, idx) => (
-                          <span
-                            key={idx}
-                            className={`px-3 py-1 rounded-full text-xs font-medium ${
-                              healthCheck.cancer_classes.includes(className)
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-green-100 text-green-700'
-                            }`}
-                          >
-                            {className}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    <AlertCircle className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                    <p>Unable to load health check information</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Plots Section */}
-              <div className="bg-white rounded-2xl shadow-lg p-6">
-                <h2 className="text-2xl font-semibold mb-4 flex items-center text-gray-800">
-                  <BarChart3 className="w-6 h-6 mr-2 text-purple-600" />
-                  Model Training Plots
-                </h2>
-                {loadingPlots ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-8 h-8 text-purple-600 animate-spin mr-3" />
-                    <p className="text-gray-600">Loading plots...</p>
-                  </div>
-                ) : plots && plots.count > 0 ? (
-                  <div className="space-y-6">
-                    <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                      <p className="text-sm text-gray-700">
-                        <span className="font-semibold">Available Plots:</span> {plots.count} of 4
-                        {plots.all_available && (
-                          <span className="ml-2 text-green-600 font-medium">✓ All plots available</span>
-                        )}
-                      </p>
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-6">
-                      {Object.entries(plots.plots).map(([plotName, plotUrl]) => (
-                        <div key={plotName} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                          <h3 className="font-semibold text-gray-800 mb-3 capitalize">
-                            {plotName.replace(/_/g, ' ')}
-                          </h3>
-                          <div className="relative">
-                            <img
-                              src={`http://localhost:5001${plotUrl}`}
-                              alt={plotName.replace(/_/g, ' ')}
-                              className="w-full h-auto rounded-lg shadow-md"
-                              onError={(e) => {
-                                const target = e.target as HTMLImageElement;
-                                target.style.display = 'none';
-                                const errorDiv = document.createElement('div');
-                                errorDiv.className = 'text-center py-4 text-red-600';
-                                errorDiv.textContent = 'Failed to load plot';
-                                target.parentElement?.appendChild(errorDiv);
-                              }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                    <p>No plots available. Please train the model first.</p>
-                  </div>
-                )}
-              </div>
-            </div>
+            <GraphsView
+              healthCheck={healthCheck}
+              loadingHealth={loadingHealth}
+              plots={plots}
+              loadingPlots={loadingPlots}
+              onExpandImage={setExpandedImage}
+            />
           )}
 
           {/* Instructions - Only show in prediction view */}
           {viewMode === "prediction" && (
-            <div className="mt-8 bg-white rounded-2xl shadow-lg p-6">
-              <h2 className="text-xl font-semibold mb-4 text-gray-800">
+            <div className="mt-8 bg-white/10 backdrop-blur-xl rounded-2xl shadow border border-white/20 p-6">
+              <h2 className="text-xl font-semibold mb-4 text-white">
                 How to Use
               </h2>
-            <div className="grid md:grid-cols-3 gap-4">
-              <div className="flex items-start space-x-3">
-                <div className="bg-blue-100 rounded-full p-2 flex-shrink-0">
-                  <span className="text-blue-600 font-bold">1</span>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div className="flex items-start space-x-3">
+                  <div className="bg-green-500/20 rounded-full p-2 shrink-0 border border-green-400/30">
+                    <span className="text-green-300 font-bold">1</span>
+                  </div>
+                  <div>
+                    <h3 className="font-medium text-white mb-1">
+                      Upload Image
+                    </h3>
+                    <p className="text-sm text-white/70">Select a skin image</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-medium text-gray-800 mb-1">
-                    Upload Image
-                  </h3>
-                  <p className="text-sm text-gray-600">Select a skin image</p>
+                <div className="flex items-start space-x-3">
+                  <div className="bg-green-500/20 rounded-full p-2 shrink-0 border border-green-400/30">
+                    <span className="text-green-300 font-bold">2</span>
+                  </div>
+                  <div>
+                    <h3 className="font-medium text-white mb-1">Classify</h3>
+                    <p className="text-sm text-white/70">
+                      Click the classify button to analyze with AI
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <div className="bg-purple-100 rounded-full p-2 flex-shrink-0">
-                  <span className="text-purple-600 font-bold">2</span>
-                </div>
-                <div>
-                  <h3 className="font-medium text-gray-800 mb-1">Classify</h3>
-                  <p className="text-sm text-gray-600">
-                    Click the classify button to analyze with AI
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <div className="bg-green-100 rounded-full p-2 flex-shrink-0">
-                  <span className="text-green-600 font-bold">3</span>
-                </div>
-                <div>
-                  <h3 className="font-medium text-gray-800 mb-1">
-                    View Results
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    Review AI-based skin cancer detection scores
-                  </p>
+                <div className="flex items-start space-x-3">
+                  <div className="bg-green-500/20 rounded-full p-2 shrink-0 border border-green-400/30">
+                    <span className="text-green-300 font-bold">3</span>
+                  </div>
+                  <div>
+                    <h3 className="font-medium text-white mb-1">
+                      View Results
+                    </h3>
+                    <p className="text-sm text-white/70">
+                      Review AI-based skin cancer detection scores
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           )}
         </div>
       </div>
+
+      {/* Footer */}
+      <footer className="relative z-10 mt-16 border-t border-white/10 bg-white/5 backdrop-blur-md">
+        <div className="container mx-auto px-4 py-8">
+          <div className="grid md:grid-cols-3 gap-8 mb-6">
+            <div>
+              <h3 className="text-lg font-bold text-white mb-4 flex items-center">
+                <Activity className="w-5 h-5 text-green-400 mr-2" />
+                AI Skin Cancer Classifier
+              </h3>
+              <p className="text-sm text-white/70 leading-relaxed">
+                Advanced AI-powered medical imaging tool for skin lesion
+                classification and early detection of skin cancer.
+              </p>
+            </div>
+            <div>
+              <h4 className="text-base font-semibold text-white mb-4">
+                Medical Disclaimer
+              </h4>
+              <p className="text-xs text-white/60 leading-relaxed">
+                This tool is for educational and research purposes only. It is
+                not intended to replace professional medical diagnosis,
+                treatment, or advice. Always consult qualified healthcare
+                professionals for medical concerns.
+              </p>
+            </div>
+            <div>
+              <h4 className="text-base font-semibold text-white mb-4">
+                Supported Conditions
+              </h4>
+              <ul className="text-xs text-white/60 space-y-1">
+                <li>• Actinic keratoses (AKIEC)</li>
+                <li>• Basal cell carcinoma (BCC)</li>
+                <li>• Benign keratosis (BKL)</li>
+                <li>• Dermatofibroma (DF)</li>
+                <li>• Melanoma (MEL)</li>
+                <li>• Melanocytic nevi (NV)</li>
+                <li>• Vascular lesions (VASC)</li>
+              </ul>
+            </div>
+          </div>
+          <div className="pt-6 border-t border-white/10">
+            <div className="flex flex-col md:flex-row justify-between items-center">
+              <p className="text-xs text-white/50 mb-2 md:mb-0">
+                © {new Date().getFullYear()} AI Skin Cancer Classifier. All
+                rights reserved.
+              </p>
+              <p className="text-xs text-white/50">
+                Powered by Deep Learning & TensorFlow
+              </p>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      <ImageModal
+        imageUrl={expandedImage}
+        onClose={() => setExpandedImage(null)}
+      />
     </div>
   );
 };
